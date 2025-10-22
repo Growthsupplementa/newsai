@@ -172,4 +172,14 @@ app.listen(PORT, async () => {
   } catch (err) {
     console.error('imap watcher failed to start', err);
   }
+
+  // start queue worker when REDIS_URL configured
+  try {
+    if (process.env.REDIS_URL) {
+      const { startWorker } = require('./queueWorker');
+      startWorker().catch(e => console.error('queue worker failed', e && e.message));
+    }
+  } catch (e) {
+    console.warn('queue worker could not be started', e && e.message);
+  }
 });

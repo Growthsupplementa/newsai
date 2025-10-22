@@ -191,4 +191,108 @@ async function sendEmail({ to, subject, text, html, lead, provider }) {
   return info;
 }
 
-module.exports = { sendEmail, renderTemplate, generateVariants };
+// --- Provider connectivity verification helpers ---
+async function verifySmtpConnection() {
+  if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) return { ok: false, reason: 'missing SMTP credentials' };
+  try {
+    const t = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: Number(process.env.SMTP_PORT || 587),
+      secure: Number(process.env.SMTP_PORT || 587) === 465,
+      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+      connectionTimeout: 5000
+    });
+    await t.verify();
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: err && err.message };
+  }
+}
+
+async function verifySendGrid() {
+  if (!process.env.SENDGRID_API_KEY) return { ok: false, reason: 'missing SENDGRID_API_KEY' };
+  try {
+    const res = await axios.get('https://api.sendgrid.com/v3/user/account', { headers: { Authorization: `Bearer ${process.env.SENDGRID_API_KEY}` } });
+    if (res.status === 200) return { ok: true };
+    return { ok: false, reason: `status ${res.status}` };
+  } catch (err) {
+    return { ok: false, reason: err && err.message };
+  }
+}
+
+async function verifyMailerLite() {
+  if (!process.env.MAILERLITE_API_KEY) return { ok: false, reason: 'missing MAILERLITE_API_KEY' };
+  try {
+    const res = await axios.get('https://api.mailerlite.com/api/v2/accounts', { headers: { 'X-MailerLite-ApiKey': process.env.MAILERLITE_API_KEY } });
+    if (res.status === 200) return { ok: true };
+    return { ok: false, reason: `status ${res.status}` };
+  } catch (err) {
+    return { ok: false, reason: err && err.message };
+  }
+}
+
+async function verifyProviders() {
+  const checks = {};
+  checks.smtp = await verifySmtpConnection();
+  checks.sendgrid = await verifySendGrid();
+  checks.mailerlite = await verifyMailerLite();
+  return checks;
+}
+
+// --- Message quality checks ---
+function qualityChecks({ to, subject, text, html }) {
+  const issues = [];
+  if (!to || typeof to !== 'string' || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) issues.push('invalid or missing recipient email');
+  if (!subject || subject.trim().length < 5) issues.push('subject too short');
+  const body = (text || html || '').replace(/<[^>]*>/g, '');
+  if (body.length < 30) issues.push('body too short');
+  // naive profanity check (can be extended)
+  const profane = /(fuck|shit|bitch|asshole)/i;
+  if (profane.test(body)) issues.push('contains profanity');
+  // personalization token presence
+  if (!/\{name\}|\{company\}|\{researchSnippet\}/.test(subject + body)) issues.push('no personalization tokens found (recommend using {name}, {company}, or {researchSnippet})');
+  return { ok: issues.length === 0, issues };
+}
+
+// --- Safe send scheduler / warming sequence ---
+// safeSend accepts params: { to, subject, text, html, lead, provider, safe: { warmSequence: [ {delaySec, provider, batchSize} ], sendWindow: { startHour, endHour } } }
+const { getQueue, isRedisConfigured } = require('./queue');
+
+async function safeSend(params = {}) {
+  const { to, subject, text, html, lead, provider, safe } = params;
+  // Validate message quality first
+  const q = qualityChecks({ to, subject, text, html });
+  if (!q.ok) {
+    throw new Error('Message quality checks failed: ' + q.issues.join('; '));
+  }
+
+  // If safe not provided or empty, send immediately using sendEmail (but will still respect live guardrails in sendEmail)
+  if (!safe || !safe.warmSequence || !Array.isArray(safe.warmSequence) || safe.warmSequence.length === 0) {
+    return sendEmail({ to, subject, text, html, lead, provider });
+  }
+
+  // If Redis configured, enqueue a durable warm-send job
+  if (isRedisConfigured()) {
+    const q = getQueue();
+    if (!q) throw new Error('Queue not available despite REDIS_URL');
+    const job = await q.add({ to, subject, text, html, lead, provider, safe });
+    return { ok: true, enqueued: true, jobId: job.id };
+  }
+
+  // Fallback to in-process execution if REDIS not configured
+  for (const step of safe.warmSequence) {
+    const stepProvider = step.provider || provider;
+    const delay = Number(step.delaySec || 0) * 1000;
+    const batchSize = Number(step.batchSize || 1);
+    if (delay > 0) await new Promise(r => setTimeout(r, delay));
+    if (!isTestMode() && !chooseDefaultProvider() && !stepProvider) {
+      throw new Error('No provider available for live warm sequence');
+    }
+    await sendEmail({ to, subject, text, html, lead, provider: stepProvider });
+  }
+
+  return { ok: true, warmed: true };
+}
+
+module.exports = { sendEmail, renderTemplate, generateVariants, verifyProviders, qualityChecks, safeSend };
+
