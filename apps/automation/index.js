@@ -123,6 +123,20 @@ app.post('/mcp', async (req, res) => {
   }
 });
 
+// Preview / test endpoints
+app.post('/preview-email', async (req, res) => {
+  try {
+    const { template, lead, variants, refine, tone } = req.body;
+    const { generateVariants } = require('./mailer');
+    const out = await generateVariants(template, lead, { variants: variants || 3, refine, tone });
+    res.json({ variants: out });
+  } catch (err) {
+    console.error('preview-email error', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
 app.listen(PORT, async () => {
   console.log(`automation service listening on http://localhost:${PORT}`);
   try {

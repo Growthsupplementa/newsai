@@ -2,11 +2,17 @@ const nodemailer = require('nodemailer');
 const axios = require('axios');
 
 // Basic spintax parser: {a|b} -> randomly choose
+// Nested spintax parser: supports nested {a|{b|c}} structures
 function parseSpintax(text) {
-  return text.replace(/\{([^}]+)\}/g, (_, group) => {
-    const parts = group.split('|');
-    return parts[Math.floor(Math.random() * parts.length)];
-  });
+  if (!text) return '';
+  // recursively replace deepest braces first
+  while (/\{([^{}]+)\}/.test(text)) {
+    text = text.replace(/\{([^{}]+)\}/g, (_, group) => {
+      const parts = group.split('|');
+      return parts[Math.floor(Math.random() * parts.length)];
+    });
+  }
+  return text;
 }
 
 // Simple template renderer: interpolate {name} and run spintax
@@ -14,6 +20,38 @@ function renderTemplate(template, vars = {}) {
   let out = template.replace(/\{(\w+)\}/g, (_, key) => vars[key] || '');
   out = parseSpintax(out);
   return out;
+}
+
+// Generate variants: combine deterministic templating with spintax and optional LLM rewrites
+async function generateVariants(template, lead = {}, opts = { variants: 3 }) {
+  const variants = [];
+  // quick path: generate by spintax and templating
+  for (let i = 0; i < (opts.variants || 3); i++) {
+    const research = lead ? await personalizeResearch(lead) : {};
+    const text = renderTemplate(template, { ...lead, ...research });
+    variants.push(text);
+  }
+
+  // optionally refine using OpenAI if configured and allowed
+  if (process.env.OPENAI_API_KEY && opts.refine) {
+    try {
+      const { Configuration, OpenAIApi } = require('openai');
+      const conf = new Configuration({ apiKey: process.env.OPENAI_API_KEY });
+      const client = new OpenAIApi(conf);
+      const prompt = `Rewrite the following email message to be more ${opts.tone || 'professional'}, keep main points, and produce ${variants.length} short variants.\n\nMessage:\n${template}`;
+      const resp = await client.createCompletion({ model: 'text-davinci-003', prompt, max_tokens: 300 });
+      const text = resp.data.choices?.[0]?.text?.trim();
+      if (text) {
+        // split by double newline as heuristic
+        const parts = text.split(/\n\n+/).filter(Boolean);
+        for (let i = 0; i < Math.min(parts.length, variants.length); i++) variants[i] = parts[i].trim();
+      }
+    } catch (e) {
+      console.warn('OpenAI refine failed', e && e.message);
+    }
+  }
+
+  return variants;
 }
 
 // AI personalization using OpenAI (if configured)
@@ -86,6 +124,10 @@ async function sendEmail({ to, subject, text, html, lead, provider }) {
   if (provider === 'mailerlite') {
     return sendViaMailerLite({ to, subject, text, html });
   }
+  if (provider === 'console' || provider === 'dry-run') {
+    console.log('DRY-RUN sendEmail', { to, subject, text, html });
+    return { ok: true, dryRun: true };
+  }
 
   const t = getSmtpTransport();
   const info = await t.sendMail({
@@ -99,4 +141,4 @@ async function sendEmail({ to, subject, text, html, lead, provider }) {
   return info;
 }
 
-module.exports = { sendEmail, renderTemplate };
+module.exports = { sendEmail, renderTemplate, generateVariants };
