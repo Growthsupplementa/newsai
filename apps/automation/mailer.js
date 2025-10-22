@@ -16,9 +16,21 @@ function renderTemplate(template, vars = {}) {
   return out;
 }
 
-// AI personalization stub - replace with a call to an LLM to generate personalized pieces
+// AI personalization using OpenAI (if configured)
 async function personalizeResearch(lead) {
-  // For now return a small object; in production call an LLM with lead context
+  if (process.env.OPENAI_API_KEY) {
+    try {
+      const { Configuration, OpenAIApi } = require('openai');
+      const conf = new Configuration({ apiKey: process.env.OPENAI_API_KEY });
+      const client = new OpenAIApi(conf);
+      const prompt = `Generate a 1-2 sentence personalized research snippet about this lead for outreach. Lead data: ${JSON.stringify(lead)}`;
+      const resp = await client.createCompletion({ model: 'text-davinci-003', prompt, max_tokens: 60 });
+      const text = resp.data.choices?.[0]?.text?.trim();
+      return { researchSnippet: text || `I see you're in ${lead.company || 'your industry'}.` };
+    } catch (err) {
+      console.warn('OpenAI personalization failed, falling back', err && err.message);
+    }
+  }
   return { researchSnippet: `I see you're in ${lead.company || 'your industry'}.` };
 }
 

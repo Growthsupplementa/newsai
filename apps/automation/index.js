@@ -27,11 +27,26 @@ app.post('/send-email', async (req, res) => {
 function verifyHmac(req) {
   const secret = process.env.DIALER_SECRET;
   if (!secret) return true; // no secret configured -> skip verification
-  const signature = req.headers['x-dialer-signature'] || req.headers['x-hub-signature'] || '';
+  // Twilio has its own signature flow
+  const twilioSig = req.headers['x-twilio-signature'];
+  if (twilioSig && process.env.TWILIO_AUTH_TOKEN) {
+    try {
+      const twilio = require('twilio');
+      const url = process.env.DIALER_WEBHOOK_URL || `https://${req.headers.host}${req.originalUrl}`;
+      const isValid = twilio.validateRequest(process.env.TWILIO_AUTH_TOKEN, twilioSig, url, req.body);
+      return isValid;
+    } catch (e) {
+      console.warn('twilio verify failed', e && e.message);
+    }
+  }
+
+  const signature = req.headers['x-dialer-signature'] || req.headers['x-hub-signature-256'] || req.headers['x-hub-signature'] || '';
   if (!signature) return false;
   const payload = JSON.stringify(req.body);
   const hmac = crypto.createHmac('sha256', secret).update(payload).digest('hex');
-  return signature === hmac;
+  // signatures may be sent as sha256=... or raw
+  const sigClean = signature.replace(/^sha256=/i, '');
+  return sigClean === hmac;
 }
 
 // Example transformation for Twilio call webhook payload

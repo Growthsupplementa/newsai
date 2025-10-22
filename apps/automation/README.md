@@ -17,3 +17,8 @@ Endpoints
 
 - POST /webhook/dialer  -> receive dialer events (HMAC with DIALER_SECRET recommended)
 - POST /send-email     -> send an email (json: to, subject, text/html)
+
+New features:
+- Dialer webhook verification: set `DIALER_SECRET` for HMAC or `TWILIO_AUTH_TOKEN` to verify Twilio signatures.
+- AI personalization: set `OPENAI_API_KEY` to generate personalized snippets for emails.
+- Multiple email providers: set `SENDGRID_API_KEY` to use SendGrid, or use SMTP vars for direct SMTP.
