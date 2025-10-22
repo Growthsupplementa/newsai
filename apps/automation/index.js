@@ -3,7 +3,7 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const { updateNotion } = require('./notion');
-const { sendEmail, renderTemplate } = require('./mailer');
+const { sendEmail, renderTemplate, verifyProviders, qualityChecks, safeSend, generateVariants } = require('./mailer');
 const { startImapWatcher } = require('./imapWatcher');
 
 const app = express();
@@ -13,10 +13,27 @@ const PORT = process.env.PORT || 4000;
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
+// Send email endpoint. Supports query param mode=verify to only verify provider connectivity and message quality.
 app.post('/send-email', async (req, res) => {
   try {
-    const { to, subject, text, html } = req.body;
-    await sendEmail({ to, subject, text, html });
+    const { to, subject, text, html, lead, provider, safe } = req.body || {};
+    const mode = (req.query.mode || 'send');
+
+    // If verify mode, run provider checks and quality checks without sending
+    if (mode === 'verify') {
+      const providerChecks = await verifyProviders();
+      const q = qualityChecks({ to, subject, text, html });
+      return res.json({ ok: true, providerChecks, quality: q });
+    }
+
+    // In send mode, if safe param present, use safeSend which will run quality checks and warming sequence
+    if (safe) {
+      const result = await safeSend({ to, subject, text, html, lead, provider, safe });
+      return res.json({ ok: true, result });
+    }
+
+    // default direct send (sendEmail will enforce live guardrails)
+    await sendEmail({ to, subject, text, html, lead, provider });
     res.json({ ok: true });
   } catch (err) {
     console.error('send-email error', err);
@@ -126,13 +143,24 @@ app.post('/mcp', async (req, res) => {
 // Preview / test endpoints
 app.post('/preview-email', async (req, res) => {
   try {
-    const { template, lead, variants, refine, tone } = req.body;
-    const { generateVariants } = require('./mailer');
+    const { template, lead, variants, refine, tone, to, subject } = req.body;
     const out = await generateVariants(template, lead, { variants: variants || 3, refine, tone });
-    res.json({ variants: out });
+    const q = qualityChecks({ to, subject, text: out[0], html: out[0] });
+    res.json({ variants: out, quality: q });
   } catch (err) {
     console.error('preview-email error', err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin endpoint: provider status / health checks
+app.get('/provider-status', async (req, res) => {
+  try {
+    const checks = await verifyProviders();
+    res.json({ ok: true, checks });
+  } catch (err) {
+    console.error('provider-status error', err);
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 
