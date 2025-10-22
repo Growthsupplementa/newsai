@@ -165,21 +165,49 @@ app.get('/provider-status', async (req, res) => {
 });
 
 
-app.listen(PORT, async () => {
-  console.log(`automation service listening on http://localhost:${PORT}`);
-  try {
-    await startImapWatcher();
-  } catch (err) {
-    console.error('imap watcher failed to start', err);
+async function startupChecks() {
+  // Enforce live-only operation: ensure at least one provider is configured and working, and REDIS_URL is present for durable queueing.
+  const providerChecks = await verifyProviders();
+  const okProviders = Object.keys(providerChecks).filter(k => providerChecks[k] && providerChecks[k].ok);
+  if (okProviders.length === 0) {
+    console.error('Startup failed: no working mail provider found. Provider checks:', providerChecks);
+    console.error('Please set SMTP_HOST/SMTP_USER/SMTP_PASS or SENDGRID_API_KEY or MAILERLITE_API_KEY with valid credentials. Exiting.');
+    process.exit(1);
   }
 
-  // start queue worker when REDIS_URL configured
-  try {
-    if (process.env.REDIS_URL) {
-      const { startWorker } = require('./queueWorker');
-      startWorker().catch(e => console.error('queue worker failed', e && e.message));
-    }
-  } catch (e) {
-    console.warn('queue worker could not be started', e && e.message);
+  if (!process.env.REDIS_URL) {
+    console.error('Startup failed: REDIS_URL is required for durable warm-send queue in production. Exiting.');
+    process.exit(1);
   }
-});
+
+  // All good
+  return { ok: true, providers: okProviders };
+}
+
+(async () => {
+  try {
+    await startupChecks();
+  } catch (err) {
+    console.error('startupChecks error', err && err.message);
+    process.exit(1);
+  }
+
+  app.listen(PORT, async () => {
+    console.log(`automation service listening on http://localhost:${PORT}`);
+    try {
+      await startImapWatcher();
+    } catch (err) {
+      console.error('imap watcher failed to start', err);
+    }
+
+    // start queue worker when REDIS_URL configured
+    try {
+      if (process.env.REDIS_URL) {
+        const { startWorker } = require('./queueWorker');
+        startWorker().catch(e => console.error('queue worker failed', e && e.message));
+      }
+    } catch (e) {
+      console.warn('queue worker could not be started', e && e.message);
+    }
+  });
+})();
