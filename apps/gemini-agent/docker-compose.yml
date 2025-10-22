@@ -1,0 +1,11 @@
+version: '3.8'
+services:
+  gemini-agent:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - USE_REAL_API=false
+      # If you want to use the real API, set GEMINI_API_KEY in an .env file or use docker-compose override
+    volumes:
+      - ./:/usr/src/app:ro
