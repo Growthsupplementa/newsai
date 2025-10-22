@@ -90,6 +90,39 @@ app.post('/webhook/dialer', async (req, res) => {
   }
 });
 
+// Minimal MCP-compatible endpoint to receive events from model-context-protocol agents
+// Example: { type: 'send_email', payload: { to, subject, template, provider } }
+app.post('/mcp', async (req, res) => {
+  try {
+    const { type, payload } = req.body || {};
+    if (!type) return res.status(400).json({ error: 'missing type' });
+    switch (type) {
+      case 'send_email':
+        await sendEmail({
+          to: payload.to,
+          subject: payload.subject,
+          text: payload.text,
+          html: payload.html,
+          lead: payload.lead,
+          provider: payload.provider
+        });
+        return res.json({ ok: true });
+      case 'create_lead':
+        await updateNotion(payload.lead);
+        return res.json({ ok: true });
+      case 'dialer_event':
+        // allow MCP to inject dialer events
+        if (payload.lead) await updateNotion(payload.lead);
+        return res.json({ ok: true });
+      default:
+        return res.status(400).json({ error: 'unknown type' });
+    }
+  } catch (err) {
+    console.error('mcp handler error', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.listen(PORT, async () => {
   console.log(`automation service listening on http://localhost:${PORT}`);
   try {

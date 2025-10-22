@@ -61,6 +61,16 @@ async function sendViaSendGrid({ to, subject, text, html }) {
   return res.data;
 }
 
+async function sendViaMailerLite({ to, subject, text, html }) {
+  const key = process.env.MAILERLITE_API_KEY;
+  if (!key) throw new Error('MAILERLITE_API_KEY not configured');
+  // MailerLite transactional API example (depends on account)
+  const res = await axios.post('https://api.mailerlite.com/api/v2/email', {
+    to, subject, html
+  }, { headers: { 'X-MailerLite-ApiKey': key, 'Content-Type': 'application/json' } });
+  return res.data;
+}
+
 async function sendEmail({ to, subject, text, html, lead, provider }) {
   // provider: 'smtp' (default) | 'sendgrid'
   // allow personalization
@@ -72,6 +82,9 @@ async function sendEmail({ to, subject, text, html, lead, provider }) {
 
   if (provider === 'sendgrid') {
     return sendViaSendGrid({ to, subject, text, html });
+  }
+  if (provider === 'mailerlite') {
+    return sendViaMailerLite({ to, subject, text, html });
   }
 
   const t = getSmtpTransport();
