@@ -4,6 +4,7 @@ const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const { updateNotion } = require('./notion');
 const { sendEmail, renderTemplate, verifyProviders, qualityChecks, safeSend, generateVariants } = require('./mailer');
+const providerStore = require('./providerStore');
 const { startImapWatcher } = require('./imapWatcher');
 
 const app = express();
@@ -161,6 +162,47 @@ app.get('/provider-status', async (req, res) => {
   } catch (err) {
     console.error('provider-status error', err);
     res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// Provider management endpoints (admin UI can call these to configure providers)
+app.get('/providers', (req, res) => {
+  try {
+    const list = providerStore.listProviders();
+    res.json({ ok: true, providers: list });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/providers/active', (req, res) => {
+  try {
+    const active = providerStore.getActiveProvider();
+    res.json({ ok: true, active });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/providers', (req, res) => {
+  try {
+    const { name, type, meta, secret } = req.body || {};
+    if (!name || !type) return res.status(400).json({ ok: false, error: 'name and type required' });
+    providerStore.setProvider(name, { type, meta, secret });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/providers/activate', (req, res) => {
+  try {
+    const { name } = req.body || {};
+    if (!name) return res.status(400).json({ ok: false, error: 'name required' });
+    providerStore.setActiveProvider(name);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
   }
 });
 
