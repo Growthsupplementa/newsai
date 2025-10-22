@@ -1,0 +1,68 @@
+name: CI - build & smoke test
+
+on:
+  push:
+    branches: [ main, 'feature/**' ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-smoke:
+    name: Install, start server, smoke-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Cache node modules
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/apps/gemini-agent/package-lock.json', '**/apps/gemini-agent/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Install dependencies (gemini-agent)
+        working-directory: apps/gemini-agent
+        run: |
+          npm ci --silent
+
+      - name: Start server (background)
+        working-directory: apps/gemini-agent
+        run: |
+          # start server in background and redirect logs so the job can inspect them if needed
+          nohup npm start > server.log 2>&1 &
+          echo $! > server.pid
+
+      - name: Wait for server to be ready
+        working-directory: apps/gemini-agent
+        run: |
+          for i in {1..30}; do
+            if curl -sSf http://localhost:3000/ >/dev/null; then
+              echo "server ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "server did not become ready within 30s"
+          echo "--- server.log ---"
+          tail -n +1 server.log || true
+          exit 1
+
+      - name: Smoke test root page
+        working-directory: apps/gemini-agent
+        run: |
+          curl -fS http://localhost:3000/ -o /dev/null
+
+      - name: Archive server logs
+        if: always()
+        working-directory: apps/gemini-agent
+        uses: actions/upload-artifact@v4
+        with:
+          name: gemini-agent-server-log
+          path: server.log
