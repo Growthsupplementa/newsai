@@ -1,0 +1,17 @@
+version: '3.8'
+services:
+  gemini-agent:
+    build: ./apps/gemini-agent
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+
+  automation:
+    build: ./apps/automation
+    ports:
+      - "4000:4000"
+    environment:
+      - PORT=4000
+    depends_on:
+      - gemini-agent
